@@ -11,7 +11,7 @@ from app.services.positions import get_position
 from app.services.prices import set_latest_price
 from app.services.reconciliation import StatementTrade, reconcile
 from app.services.trade_ingestion import OversellError, ingest_trade
-from app.services.trade_queries import list_trades
+from app.services.trade_queries import list_trades, list_trades_page
 
 
 def trade_payload(
@@ -98,6 +98,20 @@ def test_duplicate_trade_is_idempotent(session: Session) -> None:
     assert len(trades) == 1
     assert trades[0].venue == "binance"
     assert trades[0].trade_id == "T-1001"
+
+
+def test_trade_listing_uses_id_cursor_pagination(session: Session) -> None:
+    ingest(session, trade_id="T-1")
+    ingest(session, trade_id="T-2")
+    ingest(session, trade_id="T-3")
+
+    first_page, next_cursor = list_trades_page(session, limit=2)
+    second_page, final_cursor = list_trades_page(session, limit=2, cursor=next_cursor)
+
+    assert [trade.trade_id for trade in first_page] == ["T-1", "T-2"]
+    assert next_cursor == first_page[-1].id
+    assert [trade.trade_id for trade in second_page] == ["T-3"]
+    assert final_cursor is None
 
 
 def test_reconciliation_reports_missing_and_mismatched_trades(session: Session) -> None:

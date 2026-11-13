@@ -1,9 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.schemas import TradeRequest, TradeResponse
+from app.api.schemas import TradePageResponse, TradeRequest, TradeResponse
 from app.core.database import get_db
 from app.models.trade import Trade
 from app.services.trade_ingestion import (
@@ -14,15 +14,23 @@ from app.services.trade_ingestion import (
 from app.services.trade_queries import (
     TradeNotFoundError,
     get_trade as get_trade_service,
-    list_trades as list_trades_service,
+    list_trades_page,
 )
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 
 
-@router.get("", response_model=list[TradeResponse])
-def list_trades(db: Annotated[Session, Depends(get_db)]) -> list[TradeResponse]:
-    return [_to_response(trade) for trade in list_trades_service(db)]
+@router.get("", response_model=TradePageResponse)
+def list_trades(
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    cursor: Annotated[int | None, Query(ge=1)] = None,
+) -> TradePageResponse:
+    trades, next_cursor = list_trades_page(db, limit=limit, cursor=cursor)
+    return TradePageResponse(
+        trades=[_to_response(trade) for trade in trades],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/{venue}/{trade_id}", response_model=TradeResponse)

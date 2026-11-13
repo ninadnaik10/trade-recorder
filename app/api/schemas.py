@@ -56,6 +56,11 @@ class TradeResponse(BaseModel):
     timestamp: datetime
 
 
+class TradePageResponse(BaseModel):
+    trades: list[TradeResponse]
+    next_cursor: int | None
+
+
 class PositionResponse(BaseModel):
     symbol: str
     quantity: Decimal

@@ -60,7 +60,7 @@ The routes are registered and documented at `/docs`. All routes are implemented.
 
 An accepted new trade returns `201 Created`. Resubmitting the same trade returns the stored trade with `200 OK`; a reused `(venue, trade_id)` with different fields returns `409 Conflict`. An oversell also returns `409 Conflict` and rolls back the transaction.
 
-`GET /trades` returns all stored trades ordered by timestamp. `GET /trades/{venue}/{trade_id}` returns `404 Not Found` when that idempotency key does not exist.
+`GET /trades` returns up to 100 trades ordered by database id. Use `limit` (1-1000) and `cursor` query parameters for keyset pagination. The response includes `next_cursor`; pass it as `cursor` to fetch the next page. `GET /trades/{venue}/{trade_id}` returns `404 Not Found` when that idempotency key does not exist.
 
 `GET /positions` returns positions ordered by symbol. `GET /positions/{symbol}` returns `404 Not Found` when the symbol has no stored position.
 
