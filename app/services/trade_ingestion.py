@@ -1,25 +1,17 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.position import Position
 from app.models.trade import Trade
+from app.services.errors import DuplicateTradeConflictError, OversellError
 
-ZERO = Decimal("0")
-
-
-class DuplicateTradeConflictError(Exception):
-    pass
-
-
-class OversellError(Exception):
-    pass
+ZERO = Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -45,9 +37,9 @@ def ingest_trade(
             if existing is not None:
                 return _existing_result(existing, symbol, side, quantity, price, timestamp)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             session.execute(
-                _insert_for_session(session, Position)
+                pg_insert(Position)
                 .values(
                     symbol=symbol,
                     quantity=ZERO,
@@ -112,16 +104,8 @@ def _same_timestamp(first: datetime, second: datetime) -> bool:
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _insert_for_session(session: Session, model: type[Position]):
-    if session.bind is None:
-        raise RuntimeError("session is not bound to a database engine")
-    if session.bind.dialect.name == "postgresql":
-        return pg_insert(model)
-    return sqlite_insert(model)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _apply_to_position(

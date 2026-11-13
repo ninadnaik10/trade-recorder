@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     MismatchedTrade,
+    MismatchValues,
     ReconciliationRequest,
     ReconciliationResponse,
-    TradeRequest,
     TradeResponse,
 )
 from app.core.database import get_db
@@ -25,7 +27,7 @@ def reconcile_venue(
 ) -> ReconciliationResponse:
     if any(trade.venue != venue for trade in statement.trades):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="every statement trade must match the venue in the path",
         )
 
@@ -51,22 +53,28 @@ def reconcile_venue(
         mismatched=[
             MismatchedTrade(
                 trade_id=mismatch.trade_id,
-                differing_fields=mismatch.differing_fields,
+                differences={
+                    field: MismatchValues(
+                        stored=_format_value(values[0]),
+                        statement=_format_value(values[1]),
+                    )
+                    for field, values in mismatch.differences.items()
+                },
             )
             for mismatch in result.mismatched
         ],
     )
 
 
-def _statement_to_response(trade: StatementTrade) -> TradeRequest:
-    return TradeRequest(
+def _statement_to_response(trade: StatementTrade) -> TradeResponse:
+    return TradeResponse(
         venue=trade.venue,
         trade_id=trade.trade_id,
         symbol=trade.symbol,
         side=trade.side,
-        quantity=str(trade.quantity),
-        price=str(trade.price),
-        timestamp=trade.timestamp.isoformat(),
+        quantity=trade.quantity,
+        price=trade.price,
+        timestamp=trade.timestamp,
     )
 
 
@@ -80,3 +88,11 @@ def _trade_to_response(trade: Trade) -> TradeResponse:
         price=trade.price,
         timestamp=trade.timestamp,
     )
+
+
+def _format_value(value: object) -> str:
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return str(value)

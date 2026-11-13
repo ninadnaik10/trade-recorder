@@ -2,14 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.trade import Trade
-
-
-class TradeNotFoundError(Exception):
-    pass
-
-
-def list_trades(session: Session) -> list[Trade]:
-    return list(session.scalars(select(Trade).order_by(Trade.timestamp, Trade.id)))
+from app.services.errors import TradeNotFoundError
 
 
 def list_trades_page(
@@ -17,8 +10,14 @@ def list_trades_page(
     *,
     limit: int,
     cursor: int | None = None,
+    venue: str | None = None,
+    symbol: str | None = None,
 ) -> tuple[list[Trade], int | None]:
     query = select(Trade)
+    if venue is not None:
+        query = query.where(Trade.venue == venue)
+    if symbol is not None:
+        query = query.where(Trade.symbol == symbol)
     if cursor is not None:
         query = query.where(Trade.id > cursor)
     query = query.order_by(Trade.id).limit(limit + 1)

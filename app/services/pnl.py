@@ -6,10 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.market_price import MarketPrice
 from app.models.position import Position
-
-
-class PositionNotFoundError(Exception):
-    pass
+from app.services.errors import PositionNotFoundError
 
 
 @dataclass(frozen=True)

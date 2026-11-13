@@ -1,85 +1,112 @@
 # Trade Recorder & PnL Service
 
-FastAPI service for the Brown Rice Capital take-home assignment. It supports validated trade ingestion and PnL reporting from stored positions and latest prices.
+A FastAPI service that ingests trades from multiple venues, tracks positions, and reports realized and unrealized PnL, with idempotent ingestion, an oversell check and venue reconciliation.
+
+See [DESIGN.md](DESIGN.md) for design decisions, including the cost-basis method (average cost), and [AI_USAGE.md](AI_USAGE.md) for how AI tools were used.
 
 ## Stack
 
-- Python 3.11+
-- FastAPI
-- PostgreSQL, via SQLAlchemy and psycopg
-- Pytest for tests
+Python 3.11+, FastAPI, PostgreSQL (SQLAlchemy 2, psycopg 3), Alembic, pytest, [uv](https://docs.astral.sh/uv/).
 
 ## Setup
 
-Create and activate a virtual environment, then install the development dependencies:
+Requires PostgreSQL 14+ running locally. Create the app and test databases:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+createdb trade_recorder
+createdb trade_recorder_test
 ```
 
-Copy the database configuration template and change it for your local PostgreSQL instance:
+Install dependencies and configure the connection:
 
 ```bash
-cp .env.example .env
+uv sync --extra dev
+cp .env.example .env   # edit DATABASE_URL and TEST_DATABASE_URL if needed
 ```
 
-Run the application with:
+Apply the schema and start the server:
 
 ```bash
-uvicorn app.main:app --reload
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload
 ```
 
-On startup, the application creates the `trades`, `positions`, and `market_prices` tables if they do not exist.
+The API runs at `http://localhost:8000`, with interactive docs at `http://localhost:8000/docs`.
 
-Run the test suite with:
+## Tests
 
 ```bash
 uv run pytest
 ```
 
-## API routes
+Tests run against the Postgres database in `TEST_DATABASE_URL`. The suite applies the migrations once and empties the tables between tests, so it never touches the app database.
 
-| Method | Path | Responsibility |
+## API
+
+| Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/trades` | Ingest a trade |
-| `GET` | `/trades` | List stored trades in timestamp order |
-| `GET` | `/trades/{venue}/{trade_id}` | Return one trade by its idempotency key |
+| `GET` | `/trades` | List trades by ingestion order, paginated |
+| `GET` | `/trades/{venue}/{trade_id}` | Get one trade |
 | `GET` | `/positions` | List positions |
-| `GET` | `/positions/{symbol}` | Return a position |
-| `GET` | `/prices/{symbol}` | Return the latest price |
+| `GET` | `/positions/{symbol}` | Get one position |
 | `PUT` | `/prices/{symbol}` | Set the latest price |
-| `GET` | `/pnl` | List PnL by symbol |
-| `GET` | `/pnl/{symbol}` | Return PnL for a symbol |
-| `POST` | `/reconcile/{venue}` | Reconcile a venue statement |
+| `GET` | `/prices/{symbol}` | Get the latest price |
+| `GET` | `/pnl` | Realized and unrealized PnL for all symbols |
+| `GET` | `/pnl/{symbol}` | PnL for one symbol |
+| `POST` | `/reconcile/{venue}` | Compare a venue statement with stored trades |
 
-The routes are registered and documented at `/docs`. All routes are implemented.
+Quantities and prices are sent and returned as decimal strings. Timestamps must include a timezone and are returned in UTC.
 
-`POST /trades` already validates request shape. It requires nonempty `venue`, `trade_id`, and `symbol` strings; an exact `BUY` or `SELL` side; positive quantity and price decimal strings; and a timezone-aware ISO 8601 timestamp. Invalid submissions receive FastAPI's `422` validation response.
+### Ingesting trades
 
-An accepted new trade returns `201 Created`. Resubmitting the same trade returns the stored trade with `200 OK`; a reused `(venue, trade_id)` with different fields returns `409 Conflict`. An oversell also returns `409 Conflict` and rolls back the transaction.
+```bash
+curl -X POST http://localhost:8000/trades \
+  -H "Content-Type: application/json" \
+  -d '{"venue":"binance","trade_id":"T-1001","symbol":"BTC-USD","side":"BUY","quantity":"10","price":"100","timestamp":"2026-10-30T10:00:00Z"}'
+```
 
-`GET /trades` returns up to 100 trades ordered by database id. Use `limit` (1-1000) and `cursor` query parameters for keyset pagination. The response includes `next_cursor`; pass it as `cursor` to fetch the next page. `GET /trades/{venue}/{trade_id}` returns `404 Not Found` when that idempotency key does not exist.
+| Status | Meaning |
+| --- | --- |
+| `201 Created` | New trade stored |
+| `200 OK` | Identical trade already stored (safe retry); returns the stored trade |
+| `409 Conflict`, code `DUPLICATE_CONFLICT` | Same `(venue, trade_id)` with different fields |
+| `409 Conflict`, code `OVERSELL` | SELL larger than the current position; nothing is stored |
+| `422 Unprocessable Entity` | Validation failed |
 
-`GET /positions` returns positions ordered by symbol. `GET /positions/{symbol}` returns `404 Not Found` when the symbol has no stored position.
+### Listing trades
 
-`PUT /prices/{symbol}` creates or replaces the latest price. Its `price` field must be a positive decimal string. `GET /prices/{symbol}` returns `404 Not Found` when no latest price exists.
+`GET /trades` returns `{"trades": [...], "next_cursor": ...}`, at most `limit` trades (default 100, max 1000). Filter by `venue` and/or `symbol`; both filters can be combined with `limit` and `cursor`. Pass `next_cursor` back as `cursor` to get the next page; it is `null` on the last page.
 
-`GET /pnl` returns every stored position, including positions without a latest price. `GET /pnl/{symbol}` returns `404 Not Found` only when the position is unavailable. When a price is missing, `latest_price` and `unrealized_pnl` are `null`; realized PnL remains available. Unrealized PnL is `quantity × (latest_price − average_cost)` when a price exists.
+### Prices and PnL
 
-`POST /reconcile/{venue}` accepts `{ "trades": [...] }`, where every trade belongs to the path venue. It returns statement records missing from storage, stored records extra to the statement, and each matching `trade_id` with its differing fields.
+```bash
+curl -X PUT http://localhost:8000/prices/BTC-USD \
+  -H "Content-Type: application/json" -d '{"price":"125"}'
+
+curl http://localhost:8000/pnl/BTC-USD
+```
+
+If a symbol has no latest price, `latest_price` and `unrealized_pnl` are `null` and realized PnL is still returned.
+
+### Reconciliation
+
+```bash
+curl -X POST http://localhost:8000/reconcile/binance \
+  -H "Content-Type: application/json" \
+  -d '{"trades":[{"venue":"binance","trade_id":"T-1001","symbol":"BTC-USD","side":"BUY","quantity":"10","price":"100","timestamp":"2026-10-30T10:00:00Z"}]}'
+```
+
+Every statement trade must belong to the venue in the path. The response lists `missing` trades (on the statement, not stored), `extra` trades (stored, not on the statement), and `mismatched` trades with the stored and statement value of each differing field.
 
 ## Project layout
 
 ```text
 app/
-  api/       HTTP routes
-  core/      configuration and infrastructure
-  models/    SQLAlchemy persistence models
-  services/  domain logic
-tests/       acceptance and unit tests
+  api/        routes and request/response schemas
+  core/       configuration and database setup
+  models/     SQLAlchemy models
+  services/   business logic
+migrations/   Alembic migrations
+tests/        API and service tests
 ```
-
-See [DESIGN.md](DESIGN.md) for the selected cost-basis method and implementation plan.
-

@@ -6,12 +6,13 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.schemas import TradeRequest
+from app.services.errors import OversellError
 from app.services.pnl import get_pnl, list_pnl
 from app.services.positions import get_position
 from app.services.prices import set_latest_price
 from app.services.reconciliation import StatementTrade, reconcile
-from app.services.trade_ingestion import OversellError, ingest_trade
-from app.services.trade_queries import list_trades, list_trades_page
+from app.services.trade_ingestion import ingest_trade
+from app.services.trade_queries import list_trades_page
 
 
 def trade_payload(
@@ -43,14 +44,14 @@ def test_pnl_worked_example(session: Session) -> None:
     ingest(session, trade_id="T-1", quantity="10", price="100")
     ingest(session, trade_id="T-2", quantity="10", price="110")
     ingest(session, trade_id="T-3", side="SELL", quantity="5", price="120")
-    set_latest_price(session, "BTC-USD", Decimal("125"))
+    set_latest_price(session, "BTC-USD", Decimal(125))
 
     pnl = get_pnl(session, "BTC-USD")
 
-    assert pnl.quantity == Decimal("15")
-    assert pnl.average_cost == Decimal("105")
-    assert pnl.realized_pnl == Decimal("75")
-    assert pnl.unrealized_pnl == Decimal("300")
+    assert pnl.quantity == Decimal(15)
+    assert pnl.average_cost == Decimal(105)
+    assert pnl.realized_pnl == Decimal(75)
+    assert pnl.unrealized_pnl == Decimal(300)
     assert list_pnl(session) == [pnl]
 
 
@@ -60,8 +61,8 @@ def test_pnl_keeps_realized_value_without_a_latest_price(session: Session) -> No
 
     pnl = get_pnl(session, "BTC-USD")
 
-    assert pnl.quantity == Decimal("5")
-    assert pnl.realized_pnl == Decimal("100")
+    assert pnl.quantity == Decimal(5)
+    assert pnl.realized_pnl == Decimal(100)
     assert pnl.latest_price is None
     assert pnl.unrealized_pnl is None
     assert list_pnl(session) == [pnl]
@@ -69,13 +70,13 @@ def test_pnl_keeps_realized_value_without_a_latest_price(session: Session) -> No
 
 def test_latest_price_upsert_replaces_the_existing_price(session: Session) -> None:
     ingest(session)
-    set_latest_price(session, "BTC-USD", Decimal("100"))
-    set_latest_price(session, "BTC-USD", Decimal("125"))
+    set_latest_price(session, "BTC-USD", Decimal(100))
+    set_latest_price(session, "BTC-USD", Decimal(125))
 
     pnl = get_pnl(session, "BTC-USD")
 
-    assert pnl.latest_price == Decimal("125")
-    assert pnl.unrealized_pnl == Decimal("250")
+    assert pnl.latest_price == Decimal(125)
+    assert pnl.unrealized_pnl == Decimal(250)
 
 
 def test_oversell_is_rejected_without_changing_position(session: Session) -> None:
@@ -84,8 +85,9 @@ def test_oversell_is_rejected_without_changing_position(session: Session) -> Non
     with pytest.raises(OversellError):
         ingest(session, trade_id="T-1002", side="SELL", quantity="15")
 
-    assert get_position(session, "BTC-USD").quantity == Decimal("10")
-    assert len(list_trades(session)) == 1
+    assert get_position(session, "BTC-USD").quantity == Decimal(10)
+    trades, _ = list_trades_page(session, limit=10)
+    assert len(trades) == 1
 
 
 def test_duplicate_trade_is_idempotent(session: Session) -> None:
@@ -94,7 +96,7 @@ def test_duplicate_trade_is_idempotent(session: Session) -> None:
 
     assert first.created is True
     assert second.created is False
-    trades = list_trades(session)
+    trades, _ = list_trades_page(session, limit=10)
     assert len(trades) == 1
     assert trades[0].venue == "binance"
     assert trades[0].trade_id == "T-1001"
@@ -129,8 +131,8 @@ def test_reconciliation_reports_missing_and_mismatched_trades(session: Session) 
 
     assert [trade.trade_id for trade in result.missing] == ["T3"]
     assert result.extra == []
-    assert [(item.trade_id, item.differing_fields) for item in result.mismatched] == [
-        ("T2", ["quantity"])
+    assert [(item.trade_id, item.differences) for item in result.mismatched] == [
+        ("T2", {"quantity": (Decimal(5), Decimal(6))})
     ]
 
 

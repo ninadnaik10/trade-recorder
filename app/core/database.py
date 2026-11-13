@@ -9,12 +9,6 @@ engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args={
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
 
-def create_tables() -> None:
-    from app.models import Base
-
-    Base.metadata.create_all(bind=engine)
-
-
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:

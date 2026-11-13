@@ -1,13 +1,30 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PlainSerializer,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 PositiveDecimalString = Annotated[
     Decimal,
-    Field(gt=Decimal("0"), max_digits=38, decimal_places=18),
+    Field(gt=Decimal(0), max_digits=38, decimal_places=18),
+]
+
+
+def _format_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+DecimalStr = Annotated[
+    Decimal,
+    PlainSerializer(_format_decimal, return_type=str, when_used="json"),
 ]
 
 
@@ -43,7 +60,7 @@ class TradeRequest(BaseModel):
     def require_timezone(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("must include a timezone")
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
 
 class TradeResponse(BaseModel):
@@ -51,9 +68,14 @@ class TradeResponse(BaseModel):
     trade_id: str
     symbol: str
     side: Literal["BUY", "SELL"]
-    quantity: Decimal
-    price: Decimal
+    quantity: DecimalStr
+    price: DecimalStr
     timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
 
 
 class TradePageResponse(BaseModel):
@@ -63,8 +85,8 @@ class TradePageResponse(BaseModel):
 
 class PositionResponse(BaseModel):
     symbol: str
-    quantity: Decimal
-    average_cost: Decimal
+    quantity: DecimalStr
+    average_cost: DecimalStr
 
 
 class LatestPriceRequest(BaseModel):
@@ -78,17 +100,22 @@ class LatestPriceRequest(BaseModel):
 
 class LatestPriceResponse(BaseModel):
     symbol: str
-    price: Decimal
+    price: DecimalStr
     updated_at: datetime
+
+    @field_validator("updated_at")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
 
 
 class PnlResponse(BaseModel):
     symbol: str
-    quantity: Decimal
-    average_cost: Decimal
-    latest_price: Decimal | None
-    realized_pnl: Decimal
-    unrealized_pnl: Decimal | None
+    quantity: DecimalStr
+    average_cost: DecimalStr
+    latest_price: DecimalStr | None
+    realized_pnl: DecimalStr
+    unrealized_pnl: DecimalStr | None
 
 
 class ReconciliationRequest(BaseModel):
@@ -102,12 +129,17 @@ class ReconciliationRequest(BaseModel):
         return self
 
 
+class MismatchValues(BaseModel):
+    stored: str
+    statement: str
+
+
 class MismatchedTrade(BaseModel):
     trade_id: str
-    differing_fields: list[str]
+    differences: dict[str, MismatchValues]
 
 
 class ReconciliationResponse(BaseModel):
-    missing: list[TradeRequest]
+    missing: list[TradeResponse]
     extra: list[TradeResponse]
     mismatched: list[MismatchedTrade]

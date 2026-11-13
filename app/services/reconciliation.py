@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -22,7 +22,7 @@ class StatementTrade:
 @dataclass(frozen=True)
 class Mismatch:
     trade_id: str
-    differing_fields: list[str]
+    differences: dict[str, tuple[object, object]]
 
 
 @dataclass(frozen=True)
@@ -53,21 +53,23 @@ def reconcile(
     ]
     mismatched = []
     for trade_id in sorted(stored_by_trade_id.keys() & statement_by_trade_id.keys()):
-        differing_fields = _differing_fields(
+        differences = _differing_fields(
             stored_by_trade_id[trade_id], statement_by_trade_id[trade_id]
         )
-        if differing_fields:
-            mismatched.append(Mismatch(trade_id=trade_id, differing_fields=differing_fields))
+        if differences:
+            mismatched.append(Mismatch(trade_id=trade_id, differences=differences))
     return ReconciliationResult(missing=missing, extra=extra, mismatched=mismatched)
 
 
-def _differing_fields(stored: Trade, statement: StatementTrade) -> list[str]:
+def _differing_fields(
+    stored: Trade, statement: StatementTrade
+) -> dict[str, tuple[object, object]]:
     fields = ("symbol", "side", "quantity", "price", "timestamp")
-    return [
-        field
+    return {
+        field: (getattr(stored, field), getattr(statement, field))
         for field in fields
         if not _fields_match(field, getattr(stored, field), getattr(statement, field))
-    ]
+    }
 
 
 def _fields_match(field: str, stored: object, statement: object) -> bool:
@@ -80,5 +82,5 @@ def _as_utc(value: object) -> datetime:
     if not isinstance(value, datetime):
         raise TypeError("timestamp values must be datetimes")
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

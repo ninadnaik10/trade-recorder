@@ -2,10 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.position import Position
-
-
-class PositionNotFoundError(Exception):
-    pass
+from app.services.errors import PositionNotFoundError
 
 
 def list_positions(session: Session) -> list[Position]:

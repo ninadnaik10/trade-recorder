@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 from app.api.schemas import PositionResponse
 from app.core.database import get_db
 from app.models.position import Position
+from app.services.errors import PositionNotFoundError
 from app.services.positions import (
-    PositionNotFoundError,
     get_position as get_position_service,
+)
+from app.services.positions import (
     list_positions as list_positions_service,
 )
 

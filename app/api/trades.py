@@ -6,14 +6,18 @@ from sqlalchemy.orm import Session
 from app.api.schemas import TradePageResponse, TradeRequest, TradeResponse
 from app.core.database import get_db
 from app.models.trade import Trade
-from app.services.trade_ingestion import (
+from app.services.errors import (
     DuplicateTradeConflictError,
     OversellError,
+    TradeNotFoundError,
+)
+from app.services.trade_ingestion import (
     ingest_trade as ingest_trade_service,
 )
 from app.services.trade_queries import (
-    TradeNotFoundError,
     get_trade as get_trade_service,
+)
+from app.services.trade_queries import (
     list_trades_page,
 )
 
@@ -21,12 +25,20 @@ router = APIRouter(prefix="/trades", tags=["trades"])
 
 
 @router.get("", response_model=TradePageResponse)
-def list_trades(
+def list_trades_endpoint(
     db: Annotated[Session, Depends(get_db)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     cursor: Annotated[int | None, Query(ge=1)] = None,
+    venue: Annotated[str | None, Query(min_length=1)] = None,
+    symbol: Annotated[str | None, Query(min_length=1)] = None,
 ) -> TradePageResponse:
-    trades, next_cursor = list_trades_page(db, limit=limit, cursor=cursor)
+    trades, next_cursor = list_trades_page(
+        db,
+        limit=limit,
+        cursor=cursor,
+        venue=venue,
+        symbol=symbol,
+    )
     return TradePageResponse(
         trades=[_to_response(trade) for trade in trades],
         next_cursor=next_cursor,
@@ -54,9 +66,15 @@ def ingest_trade(
     try:
         result = ingest_trade_service(db, **trade.model_dump())
     except OversellError as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "OVERSELL", "message": str(error)},
+        ) from error
     except DuplicateTradeConflictError as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DUPLICATE_CONFLICT", "message": str(error)},
+        ) from error
 
     if not result.created:
         response.status_code = status.HTTP_200_OK

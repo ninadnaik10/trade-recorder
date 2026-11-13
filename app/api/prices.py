@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 from app.api.schemas import LatestPriceRequest, LatestPriceResponse
 from app.core.database import get_db
 from app.models.market_price import MarketPrice
+from app.services.errors import LatestPriceNotFoundError
 from app.services.prices import (
-    LatestPriceNotFoundError,
     get_latest_price,
+)
+from app.services.prices import (
     set_latest_price as set_latest_price_service,
 )
 
